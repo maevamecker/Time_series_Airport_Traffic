@@ -1,0 +1,368 @@
+
+##PARIS ORLY - TIME SERIES PROJECT##
+
+#Import Data set as a time serie
+
+#Read the data
+Paris_Orly_Data<-read.csv2('Paris_Orly.csv')
+Paris_Traff<-Paris_Orly_Data[1:241,]
+str(Paris_Orly_Data)
+#Define time series object
+traffic.ts<-ts(Paris_Traff$Trafic, start=c(2000,1), frequency=12)
+traffic.ts
+#In order to realize a simulation of a time serie analysis in "normal conditions" we will consider all dates
+#until February 2020 so we wont see our model perturbed by a unexpected exterior factor as the coronavirus is.
+
+#--------------------------------------
+#Step 0: Description of the time serie
+#--------------------------------------
+
+#Start date
+start(traffic.ts)
+
+#End date
+end(traffic.ts)
+
+#Frequency
+frequency(traffic.ts)
+
+#We visualize our data in date in fraction of year respect to month unit 1/12
+time(traffic.ts)
+
+#We visualize the distribution of the raw data over the time
+plot.ts(traffic.ts, xlab='date(monthly)', ylab='traffic', main='Traffic at Paris-Orly airport')
+
+#To beter observe the three components we decompose our serie : trend, variance and residuals
+x<-decompose(traffic.ts)
+plot(x)
+#Comment : We can observe an increasing trend, seasonality and not really white noise distribution on the residuals so we suspect
+#that our raw data serie is non stationary
+
+#To analyze in details the seasonality
+monthplot(traffic.ts)
+
+#------------------------------
+#Step 1 : Stationarity
+#------------------------------
+
+#We analyse the Autocorrelation function and the partial autocorrelation function of our raw data serie
+#to know if we have or not stationarity
+
+#ACF
+acf(ts(traffic.ts, frequency = 1))
+#Comment : Autocorrelation function doesn't decay fast to 0 so we can conclude that our raw data is not stationarity
+
+#PACF
+pacf(ts(traffic.ts, frequency = 1))
+#Comment:same conclusion with the parcial autocorrelation function
+
+#We need to make some transformations so we can convert our raw data to a stationary time serie
+
+#1.1-Remove the increasing of variance around the trend : logarithmic transformation
+ltraffic.ts<-log(traffic.ts)
+#Compare raw data and log transformation
+plot(cbind(traffic.ts, ltraffic.ts), main="Traffic and log tansformation")
+#Comment : The variance is a bit more flat but it doesn't really improve
+
+#Verify stationarity on the log transformated serie
+#ACF
+acf(ts(ltraffic.ts, frequency = 1))
+#Comment: The autocorrelation function doesn't decay to 0 so we can conclude that the log transformation is not enough to achieve stationarity
+#PACF
+pacf(ts(ltraffic.ts, frequency = 1))
+#Comment : same with the parcial autocorrelation function
+
+
+#1.2-Remove the trend : 1st order diff
+dltraffic.ts<-diff(ltraffic.ts,1)
+#Compare raw data and the 1st order differential of the log transformation
+plot(cbind(traffic.ts, dltraffic.ts), main="Traffic and log and differential of fist order tansformation")
+#Comment : Indeed we have remove the incremental trend
+
+#Verify stationarity on the log and 1st order diffirence transformed serie
+#ACF
+acf(ts(dltraffic.ts, frequency = 1))
+#Comment : Correlation function it's better (shocks less persistent) but still doesn't decay fast to 0 so we can conclude that our transformed serie is not stationary yet
+#PACF
+pacf(ts(dltraffic.ts, frequency = 1))
+#Comment : Same
+
+#1.3-Remove seasonality : Diff of order 12
+dltraffic.ts_12<-diff(dltraffic.ts,12)
+#Compare raw data and the 12th order differential of the log transformation
+plot(cbind(traffic.ts, dltraffic.ts_12), main="Traffic and log and differential of order 12 tansformation")
+#Comment : Indeed we have remove seasonality . 
+#Note that we have some outliers between 2010 and 2015-> some perturbation on the trafic that our model will struggle to capture
+#Later we will add some additional features to the model to take this perturbations into account (we will add dummy variables)
+
+#Verify stationarity on the log and 1st order diff transformed serie
+#ACF
+acf(ts(dltraffic.ts_12, frequency = 1))
+#Comment:More similar to a stationariy serie [q=2] -> but some significance at lag 12 and 13 [Q=1, s=12]
+#PACF
+pacf(ts(dltraffic.ts_12, frequency = 1))
+#Comment:It looks quite close to a stationary serie (decay fast to 0) [p=1]-> but at lag 12 some significance [P=1, S=12]
+
+#Try to fit a multiplicative ARIMA on the transformed data (stationarity) which is the same
+#of trying to fit a multiplicative SARIMA at the log(raw data)
+
+#---------------------------------
+#Step 2 : Box Jenkins methodology
+#---------------------------------
+
+#2.1- Identification of orders p and Q
+#d=1  ; D=1
+#From the acf graph : #q= 2; Q=1
+#From the pacf graph : p= 1 ; P=1
+
+#s=12
+
+#2.2- Estimation of multiplicative SARIMA
+#Install packages
+install.packages('TSA')
+library(TSA)
+
+#We estimate the model (Multiplicative SARIMA with the coefficient chosen)
+mod1<-arima(ltraffic.ts, c(1,1,2), seasonal=list(order=c(1,1,1), period=12), method='ML')
+mod1
+#Our AIC = - 809.15 which seems to be quite low 
+
+#Plot of the fitted values and the log of the raw data traffic
+fit1<-fitted(mod1)
+plot.ts(cbind(ltraffic.ts, fit1), plot.type='single', col=c('black', 'red'))
+#Comment:
+
+#Plot of the fitted values of the traffic and the raw data
+
+plot.ts(cbind(traffic.ts, 2.718^fit1), plot.type='single', col=c('black', 'red'))
+#--------------------------
+#Step 3 : Validation of the model
+
+#Significance of the coefficient : with the student test and the p-value
+mod1
+mod1$coef
+mod1$var.coef
+
+tstat<-mod1$coef/sqrt(diag(mod1$var.coef))
+tstat
+pvalue<-2*(1-pnorm(abs(tstat)))
+tstat
+pvalue
+
+#Remove the coefficient MA1 -> q=0
+#if the p-value is less than 5% is statistic significant (different from 0) , if not coeff useless
+mod2<-arima(ltraffic.ts, c(1,1,0), seasonal=list(order=c(1,1,1), period=12), method='ML')
+mod2
+
+mod2$coef
+mod2$var.coef
+
+tstat2<-mod2$coef/sqrt(diag(mod2$var.coef))
+
+pvalue2<-2*(1-pnorm(abs(tstat2)))
+tstat2
+pvalue2
+
+#Now we remove sAR1 : P = 0
+mod3<-arima(ltraffic.ts, c(1,1,0), seasonal=list(order=c(0,1,1), period=12), method='ML')
+mod3
+
+mod3$coef
+mod3$var.coef
+
+tstat3<-mod3$coef/sqrt(diag(mod3$var.coef))
+
+pvalue3<-2*(1-pnorm(abs(tstat3)))
+tstat3
+pvalue3
+
+mod4<-arima(ltraffic.ts, c(1,1,0), seasonal=list(order=c(0,1,1), period=12), method='ML')
+mod4
+
+mod4$coef
+mod4$var.coef
+
+tstat4<-mod4$coef/sqrt(diag(mod4$var.coef))
+
+pvalue4<-2*(1-pnorm(abs(tstat4)))
+tstat4
+pvalue4
+
+#Residuals analysis
+res4<-mod4$residuals
+plot(res4)
+
+
+#ACF of the residuals (white noise assumption)
+acf(ts(res4, frequency = 1))
+#Comment: No significant coefficients for the residuals
+
+#PACF of the residuals 
+pacf(ts(res4, frequency = 1))
+#Comment: One significant coefficient at lag 13
+
+#L jung-Box test to check for the significance of ACF
+Box.test(res4, lag=20, type="Ljung-Box")
+#Comment:p-value = 66% > 5% so we accept H0 : white noise assumption -> we haven't miss any important information on our model
+
+#Normality assumption
+#Shapito, qqplot, histogram....
+
+#We compute the normalized residuals -> res/std(res), if my residuals are normally distrib, the std residuals should follow the standard normal distribution (95% of chances that my res takes values [-2,2])
+#We check this visualy (no relevant outliers)
+
+res_stand<- res4/sqrt(mod4$sigma2)
+summary(res_stand)
+
+#Comment : average is very close to 0, the min and the max are outside -2 and 2
+
+#If the normality assumption is satisfied the standardise residuals should lie in between -2 and 2 with 95% of chance
+#we can plot the value of the stdardize residuals
+
+plot(res_stand)
+abline(a=2, b=0, col="red")
+abline(a=-2, b=0, col='red')
+#Comment : we obviouslu detect some outliers (we have 95% of chances so ok if some of them)-> we can focus on the big outliers in order to understand why our model fits badly on this date
+#We can identified 2 big outliers that correspond to the lowest and the second lowest value of the residuals
+
+#We need to know which date -> why the real life behaves different from what we are expect
+
+#Function that enables to identify the outliers
+min(res_stand)
+out1<-which (res_stand < -4)
+out1
+out2<-which(res_stand< -3.5 & res_stand > -4)
+out2
+
+#recover the date associated at this traffic outlier
+install.packages('zoo')
+library(zoo)
+index(res_stand)[out1]
+index(res_stand)[out2]
+#The date of the oulier 1 is :  February 2003  (strike???)
+#The date of the oulier 2 is : April 2010
+
+traffic.ts[out1]
+traffic.ts[(out1-2):(out1+2)]
+traffic.ts[(out1-14):(out1-10)]
+#In February 2002 the value of traffic was similar to January 2002 and December 2002
+#It is not at all the case in 2003
+
+traffic.ts[out2]
+traffic.ts[(out2-2):(out2+2)]
+traffic.ts[(out2-14):(out2-10)]
+#In April 2009 the value of traffic was similar to March 2009 and May 2009
+#It is not at all the case in 2010
+
+#2 options : Change the value to a more plausible one
+#or add a dummy in the model
+
+#QQ-plot
+qqnorm(res4)
+qqline(res4)
+
+#Shapiro test
+shapiro.test(res4)
+
+#Pvalue<<5% we reject normality (H0: Normal distribution)-> Maybe due to the outliers
+
+#Heteroscedasticity -> constant variance
+#Plot-> autocorrelation function of the squared residuals, 
+sq.res<-(res4)^2
+acf(ts(sq.res, frequency=1))
+#Issue on the fist order coefficient - sqr value of the residuals at date t and t-1 so variance not constant -> due to the outliers
+#if we control the outliers this will dissapear
+
+#or fit a model on the variance of the residuals (instead of considering confidence variance constant we considering depending on the vairance -> arsh and harsh model)
+
+#The first order corelation is significant 
+#so there seems to be a non constant variance, it may be due to the outliers we have identified on the graph ofthe residuales
+
+#Other option fit a GARCH model on the variance
+
+
+
+#Test-> 
+install.packages('TSA')
+library(TSA)
+Htest<-McLeod.Li.test(mod4, plot=FALSE)
+Htest
+
+#Step-2 : estimation of ARIMAX
+
+#Create a dummy variable
+Paris_Traff$dum_1<-0
+Paris_Traff$dum_1[out1]<-1
+Paris_Traff$dum_2<-0
+Paris_Traff$dum_2[out2]<-1
+
+
+
+mod5 <- arima(ltraffic.ts, c(1,1,0), seasonal=list(order=c(0,1,1), period=12), method='ML', xreg = cbind(Paris_Traff$dum_1, Paris_Traff$dum_2))
+mod5
+?arima
+#Plot the fitted values
+fit2<-fitted(mod5)
+plot.ts(cbind(ltraffic.ts, fit2), plot.type='single', col=c('black', 'red'))
+
+#Validation of the model
+
+mod5$coef
+mod5$var.coef
+
+tstat5<-mod5$coef/sqrt(diag(mod5$var.coef))
+
+pvalue5<-2*(1-pnorm(abs(tstat5)))
+tstat5
+pvalue5
+
+#Residuals analysis
+res5<-mod5$residuals
+plot(res5)
+
+
+#ACF of the residuals (white noise assumption)
+acf(ts(res5, frequency = 1))
+#Comment: No significant coefficients for the residuals
+
+#PACF of the residuals 
+pacf(ts(res5, frequency = 1))
+#Comment: One significant coefficient at lag 13
+
+#L jung-Box test to check for the significance of ACF
+Box.test(res5, lag=20, type="Ljung-Box")
+#Comment:p-value = 66% > 5% so we accept H0 : white noise assumption -> we haven't miss any important information on our model
+
+#Normality assumption
+#Shapito, qqplot, histogram....
+
+#We compute the normalized residuals -> res/std(res), if my residuals are normally distrib, the std residuals should follow the standard normal distribution (95% of chances that my res takes values [-2,2])
+#We check this visualy (no relevant outliers)
+
+res_stand2<- res5/sqrt(mod5$sigma2)
+summary(res_stand2)
+
+#Comment : average is very close to 0, the min and the max are outside -2 and 2
+
+#If the normality assumption is satisfied the standardise residuals should lie in between -2 and 2 with 95% of chance
+#we can plot the value of the stdardize residuals
+
+plot(res_stand2)
+abline(a=2, b=0, col="red")
+abline(a=-2, b=0, col='red')
+
+#QQ-plot
+qqnorm(res5)
+qqline(res5)
+
+#Shapiro test
+shapiro.test(res5)
+
+#Pvalue<<5% we reject normality (H0: Normal distribution)-> Maybe due to the outliers
+
+#Heteroscedasticity -> constant variance
+#Plot-> autocorrelation function of the squared residuals, 
+sq.res2<-(res5)^2
+acf(ts(sq.res2, frequency=1))
+
+
